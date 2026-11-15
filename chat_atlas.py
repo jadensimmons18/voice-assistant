@@ -1,9 +1,10 @@
 import os
+import re
 
 import anthropic
 from dotenv import load_dotenv
 
-from atlas_voice import speak
+from atlas_voice import speak, speak_sentences
 
 load_dotenv()  # reads the .env file in this folder into environment variables
 client = anthropic.Anthropic(api_key=os.getenv("CLAUDE_API"))
@@ -21,24 +22,39 @@ You cannot control any devices yet. If asked to, say so politely."""
 history = []  # the conversation so far, so Atlas remembers context
 
 
-def ask_atlas(user_text):
-    """Send the user's message to Claude and return Atlas's reply as text."""
-    history.append({"role": "user", "content": user_text})
+# A sentence ends with . ! or ? followed by a space
+SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 
-    response = client.messages.create(
+
+def ask_atlas(user_text):
+    """Stream Atlas's reply from Claude, handing back one sentence at a time."""
+    history.append({"role": "user", "content": user_text})
+    buffer = ""  # text received but not yet a full sentence
+
+    with client.messages.stream(
         model="claude-haiku-5-5",             # cheapest current Claude model
         max_tokens=1024,                      # spoken replies are short
         output_config={"effort": "low"},      # quicker replies for casual chat
         system=SYSTEM_PROMPT,
         messages=history,
-    )
+    ) as stream:
+        for chunk in stream.text_stream:
+            buffer += chunk
+            parts = SENTENCE_END.split(buffer)
+            # Every part except the last is a finished sentence
+            for sentence in parts[:-1]:
+                if sentence.strip():
+                    yield sentence.strip()
+            buffer = parts[-1]  # the unfinished leftover waits for more text
 
-    history.append({"role": "assistant", "content": response.content})
+        final = stream.get_final_message()
 
-    if response.stop_reason == "refusal":
-        return "I'm afraid I can't help with that one."
+    history.append({"role": "assistant", "content": final.content})
 
-    return " ".join(block.text for block in response.content if block.type == "text")
+    if final.stop_reason == "refusal":
+        yield "I'm afraid I can't help with that one."
+    elif buffer.strip():
+        yield buffer.strip()  # the last sentence (it has no space after it)
 
 
 if __name__ == "__main__":
@@ -54,13 +70,15 @@ if __name__ == "__main__":
             break
 
         try:
-            reply = ask_atlas(user_text)
+            print("Atlas: ", end="", flush=True)
+            speak_sentences(
+                ask_atlas(user_text),
+                on_start=lambda sentence: print(sentence, end=" ", flush=True),
+            )
+            print()
         except anthropic.AuthenticationError:
             print("Your API key is missing or wrong. Check CLAUDE_API in your .env file.")
             break
         except anthropic.APIConnectionError:
             print("Couldn't reach the API. Check your internet connection.")
             continue
-
-        print(f"Atlas: {reply}")
-        speak(reply)

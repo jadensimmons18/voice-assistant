@@ -19,7 +19,8 @@ The assistant is named **Atlas**: a warm, polite, charismatic British male voice
 
 - macOS, Python 3.14 from the python.org installer, virtual environment in `.venv/` (`source .venv/bin/activate`).
 - Python 3.14 from python.org didn't ship with SSL certificates, which broke downloads. Fixed with `sudo "/Applications/Python 3.14/Install Certificates.command"`.
-- Installed packages: `piper-tts` (no longer used), `kokoro-onnx`, `soundfile`, `sounddevice`.
+- Packages are listed in `requirements.txt` (`pip install -r requirements.txt`). The `.venv` was rebuilt after the project folder was renamed from `custom-voice-assistant`; a venv hard-codes its path, so recreate it if the folder moves.
+- `.env` (holds `CLAUDE_API`) and the model files are gitignored, so a fresh clone needs them added by hand.
 - Model files in the project root, not committed: `kokoro-v1.0.onnx`, `voices-v1.0.bin` (from the thewh1teagle/kokoro-onnx GitHub releases, `model-files-v1.0`).
 - Target speaker hardware will probably be Linux (e.g. Raspberry Pi). Avoid Mac-only tools like `afplay` in real code; use `sounddevice`.
 
@@ -35,7 +36,7 @@ The assistant is named **Atlas**: a warm, polite, charismatic British male voice
 
 ## Files
 
-- `atlas_voice.py`: **the voice module.** Loads Kokoro once, defines `ATLAS_VOICE` and `ATLAS_SPEED`, has a `PRONUNCIATIONS` dict plus `fix_pronunciation()`, and `speak(text)` plays audio through `sounddevice`. Everything else should call `speak()`.
+- `atlas_voice.py`: **the voice module.** Loads Kokoro once, defines `ATLAS_VOICE` and `ATLAS_SPEED`, has a `PRONUNCIATIONS` dict plus `fix_pronunciation()`, `speak(text)` plays audio through `sounddevice`, and `speak_sentences(sentences, on_start)` plays a stream of sentences gaplessly (it builds the next sentence's audio while the current one plays). Everything else should call these.
 - `voice-brief.md`: the voice spec (name, personality, accent, pace). **Incomplete on purpose; paused until the product is closer to launch.** Remaining gaps: the example lines are empty, the only reference voice is JARVIS (add 2–3 others), "quirky" needs defining (dry wit vs playful), and which British accent.
 - `compare_voices.py`, `tune_voice.py`, `test_name.py`: tutorial experiment scripts from Steps 3–4.
 - `.gitignore` should include `.venv/`, `*.onnx`, `*.bin`, `*.wav` (the models are about 400 MB).
@@ -47,11 +48,11 @@ The assistant is named **Atlas**: a warm, polite, charismatic British male voice
 2. ✅ **Wrote the voice brief** (partially; see above). The user wants warm, polite, charismatic and natural, and never robotic, dark or eerie.
 3. ✅ **Compared text-to-speech engines.** Kokoro beat Piper by a wide margin; the favorite was `bm_fable`.
 4. ✅ **Tuned the voice.** Settled on the Fable/Lewis 40/60 mix at speed 0.9 and fixed the pronunciation of the user's name.
-5. 🔄 **Built `speak()` in `atlas_voice.py`.** The code was given; the user hasn't yet confirmed `python3 atlas_voice.py` works.
+5. ✅ **Built `speak()` in `atlas_voice.py`.**
+6. ✅ **Connected the brain.** `chat_atlas.py`: typed question → Claude (`claude-haiku-5-5`) with Atlas's system prompt → `speak()`. Confirmed working 2026-11-13.
 
 ### Next
-6. **Connect the brain.** Typed question → Claude or ChatGPT API → answer in character → `speak()`. Includes a system prompt for Atlas's personality: polite, warm, dry wit, uses the first name or sir/ma'am, short spoken answers, no markdown or emoji, numbers written out for speech. API keys go in environment variables or `.env`, never in code.
-7. **Make it feel instant.** Stream the LLM response, split it into sentences, and speak sentence 1 while the rest generates.
+7. 🔄 **Make it feel instant.** Stream the LLM response, split it into sentences, and speak sentence 1 while the rest generates.
 8. **Speech-to-text.** Microphone → text, probably `faster-whisper` running locally.
 9. **Wake word.** "Atlas", using openWakeWord (free, supports training custom words) or Picovoice Porcupine (paid for commercial use).
 10. **Full loop.** Wake word → listen → transcribe → think → speak, plus conversation memory.
