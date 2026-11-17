@@ -5,6 +5,7 @@ import anthropic
 from dotenv import load_dotenv
 
 from atlas_voice import speak, speak_sentences
+from atlas_ears import listen
 
 load_dotenv()  # reads the .env file in this folder into environment variables
 client = anthropic.Anthropic(api_key=os.getenv("CLAUDE_API"))
@@ -58,14 +59,21 @@ def ask_atlas(user_text):
 
 
 if __name__ == "__main__":
-    print("Atlas is online. Type 'quit' to exit.")
+    print("Atlas is online. Type a message, or press Enter on an empty line to talk.")
+    print("Say or type 'quit' to exit.")
     speak("Good evening, Jaden. Atlas is online.")
 
     while True:
         user_text = input("\nYou: ").strip()
-        if not user_text:
-            continue
-        if user_text.lower() in ("quit", "exit"):
+
+        if not user_text:                  # empty line means: listen instead
+            user_text = listen()
+            if not user_text:
+                print("(I didn't catch anything. Try again.)")
+                continue
+            print(f"You said: {user_text}")
+
+        if user_text.lower().strip(".!? ") in ("quit", "exit"):
             speak("Very good. I'll be here if you need me.")
             break
 
