@@ -66,7 +66,7 @@ if __name__ == "__main__":
         print("\n(Waiting for 'Hey Atlas'...)")
         wait_for_wake_word()
         speak("Yes?")                      # tells you he's listening
-
+        print("(Listening...)")
         user_text = listen()
         if not user_text:
             print("(I didn't catch anything.)")
