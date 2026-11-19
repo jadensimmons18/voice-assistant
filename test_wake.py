@@ -2,13 +2,13 @@ import sounddevice as sd
 from openwakeword.model import Model
 from openwakeword.utils import download_models
 
-download_models()  # downloads the small ready-made models (only slow the first time)
-model = Model(wakeword_models=["hey_mycroft"], inference_framework="onnx")
+download_models()  # makes sure openWakeWord's helper models are there (only slow the first time)
+model = Model(wakeword_models=["hey_atlas.onnx"], inference_framework="onnx")  # our custom-trained model
 
 CHUNK = 1280   # 80 milliseconds of audio at 16,000 samples per second
-cooldown = 0   # stops one "hey mycroft" from being counted several times
+cooldown = 0   # stops one "hey atlas" from being counted several times
 
-print("Say 'Hey Mycroft'... (press Ctrl+C to stop)")
+print("Say 'Hey Atlas'... (press Ctrl+C to stop)")
 with sd.InputStream(samplerate=16000, channels=1, dtype="int16", blocksize=CHUNK) as stream:
     while True:
         audio, _ = stream.read(CHUNK)         # wait for the next 80 ms of sound
