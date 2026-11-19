@@ -21,7 +21,8 @@ The assistant is named **Atlas**: a warm, polite, charismatic British male voice
 - Python 3.14 from python.org didn't ship with SSL certificates, which broke downloads. Fixed with `sudo "/Applications/Python 3.14/Install Certificates.command"`.
 - Packages are listed in `requirements.txt` (`pip install -r requirements.txt`). The `.venv` was rebuilt after the project folder was renamed from `custom-voice-assistant`; a venv hard-codes its path, so recreate it if the folder moves.
 - `.env` (holds `CLAUDE_API`) and the model files are gitignored, so a fresh clone needs them added by hand.
-- Model files in the project root, not committed: `kokoro-v1.0.onnx`, `voices-v1.0.bin` (from the thewh1teagle/kokoro-onnx GitHub releases, `model-files-v1.0`).
+- Model files in the project root, not committed: `kokoro-v1.0.onnx`, `voices-v1.0.bin` (from the thewh1teagle/kokoro-onnx GitHub releases, `model-files-v1.0`), and the custom wake word `hey_atlas.onnx` (plus `hey_atlas.tflite`, unused on the Mac). The wake-word model can't be re-downloaded, so the user keeps a backup outside git.
+- Run the programs from the project folder: models are loaded by relative path.
 - Target speaker hardware will probably be Linux (e.g. Raspberry Pi). Avoid Mac-only tools like `afplay` in real code; use `sounddevice`.
 
 ## Decisions so far
@@ -35,14 +36,17 @@ The assistant is named **Atlas**: a warm, polite, charismatic British male voice
 | Replies | Streamed from the API, split into sentences, played back to back | Atlas starts talking after the first sentence instead of the whole reply |
 | Speech-to-text | **`faster-whisper`**, model `base.en`, CPU, `int8`, `vad_filter=True` (`atlas_ears.py`) | Runs locally (private, no per-use cost), MIT license, small enough for a Pi. `small.en` is the upgrade if accuracy is lacking |
 | Name pronunciation | Pronunciation dictionary that swaps text before synthesis: `"Jaden" → "Jayden"` | The engine misreads "Jaden". "Jayden" and "Jaiden" both work |
+| Wake word | **openWakeWord** (`openwakeword==0.6.0`, `inference_framework="onnx"`), custom phrase **"hey atlas"**, threshold **0.5** | Free, offline, Apache-2.0 code. Porcupine's free tier reportedly ended June 30, 2026. "Hey Atlas" (3 syllables) false-triggers less than "Atlas" alone. Offline check: "Hey Atlas" in three Kokoro voices scored 0.60–0.78; "at last", "atlas" alone and plain "hey" scored 0.001 |
+| Wake-word license | **Prototype only for now** | openWakeWord's ready-made models are CC BY-NC-SA, and the training notebook's data is marked non-commercial. Must retrain on commercially licensed data before shipping (see Later) |
 
 ## Files
 
 - `atlas_voice.py`: **the voice module.** Loads Kokoro once, defines `ATLAS_VOICE` and `ATLAS_SPEED`, has a `PRONUNCIATIONS` dict plus `fix_pronunciation()`, `speak(text)` plays audio through `sounddevice`, and `speak_sentences(sentences, on_start)` plays a stream of sentences gaplessly (it builds the next sentence's audio while the current one plays). Everything else should call these.
-- `atlas_ears.py`: **the listening module.** Loads Whisper once; `record_until_enter()` records the mic (16 kHz mono) through an `InputStream` callback until Enter, `transcribe(audio)` returns text, and `listen()` does both.
-- `chat_atlas.py`: the main program. Holds the system prompt and `history`; `ask_atlas()` is a generator that yields one sentence at a time from the streamed reply.
+- `atlas_ears.py`: **the listening module.** Loads Whisper and the wake-word model once. `wait_for_wake_word()` reads the mic in 1280-sample (80 ms) `int16` chunks and returns when the score passes `WAKE_THRESHOLD` (it calls `wake_model.reset()` first so the last trigger can't repeat). `record_until_enter()` records the mic (16 kHz mono, `float32`) through an `InputStream` callback until Enter, `transcribe(audio)` returns text, and `listen()` does both. Only one function has the mic open at a time.
+- `chat_atlas.py`: the main program. Holds the system prompt and `history`; `ask_atlas()` is a generator that yields one sentence at a time from the streamed reply. Loop: wait for "Hey Atlas" → `speak("Yes?")` → `listen()` → answer. Typing was removed in step 9; saying "quit" exits.
+- `test_wake.py`: standalone wake-word tester that prints the confidence on each trigger. Useful for tuning the threshold.
 - `voice-brief.md`: the voice spec (name, personality, accent, pace). **Incomplete on purpose; paused until the product is closer to launch.** Remaining gaps: the example lines are empty, the only reference voice is JARVIS (add 2–3 others), "quirky" needs defining (dry wit vs playful), and which British accent.
-- `.gitignore` should include `.venv/`, `*.onnx`, `*.bin`, `*.wav` (the models are about 400 MB).
+- `.gitignore` should include `.venv/`, `*.onnx`, `*.tflite`, `*.bin`, `*.wav` (the models are about 400 MB).
 
 ## Roadmap
 
@@ -56,13 +60,20 @@ The assistant is named **Atlas**: a warm, polite, charismatic British male voice
 7. ✅ **Made it feel instant.** Streamed the reply, split it into sentences, and removed the gaps by making the next sentence's audio while the current one plays (gaps went from about 1.5 s to about 5 ms).
 
 8. ✅ **Speech-to-text** with `faster-whisper`. Built `atlas_ears.py` (`listen()` records until Enter, then transcribes) and connected it to `chat_atlas.py`: an empty line means talk instead of type, and the quit check strips Whisper's punctuation (`"Quit."`). Confirmed working 2026-11-16.
+9. ✅ **Wake word.** Tested the pipeline with the ready-made "hey mycroft" (`test_wake.py`), trained a custom "hey atlas" model in openWakeWord's official Colab notebook (`automatic_model_training_simple`), then wired `wait_for_wake_word()` into `chat_atlas.py`. Confirmed working 2026-11-19. The notebook (from 2023) needed these fixes, which will be needed again for any retrain:
+   - Set the Colab runtime to an **older runtime version** (Python 3.12 or earlier) with a **T4 GPU**. `piper-phonemize` has no Python 3.13 wheels.
+   - Cell 2: AudioSet moved from `data/bal_train09.tar` (404) to `data/bal_train/09.parquet`. Replaced the block with code that downloads the parquet via `hf_hub_download`, decodes each clip with `soundfile`, resamples to 16 kHz and writes `audioset_16k/*.wav`.
+   - Cell 2: changed `!pip install onnx2tf` to `!pip install onnx2tf --no-deps`. The latest onnx2tf pins `numpy==2.2.6`, which swapped numpy mid-cell and caused a restart loop and an `ImportError: cannot import name '_center'`.
+   - Training was killed (shown as `^C`) at exactly step 7,497 of 10,000. At 75% of steps validation starts, and `train.py` line 879 feeds the whole 11-hour false-positive set as one batch, which runs out of free-Colab RAM. Fix before cell 3: `!sed -i 's/batch_size=len(X_val_fp_labels)/batch_size=4096/' openwakeword/openwakeword/train.py`. This gives the same result because false positives are summed across batches.
+   - Never click "Restart session" while a cell is running: it cuts off the remaining downloads. A restart also wipes variables (`target_word` from cell 1), so rerun cell 1 afterward. The `if not os.path.exists(...)` checks skip half-made folders, so delete them (`rm -rf`) before retrying.
+   - Note: openwakeword.com is a third-party paid service (credits) and isn't affiliated with the openWakeWord author as far as we could tell. It was considered as an alternative.
 
 ### Next
-9. **Wake word.** "Atlas", using openWakeWord (free, supports training custom words) or Picovoice Porcupine (paid for commercial use).
-10. **Full loop.** Wake word → listen → transcribe → think → speak, plus conversation memory.
+10. 🔄 **Full loop.** Wake word → listen → transcribe → think → speak. Conversation memory already exists (`history`). The missing piece is end-of-speech detection, so the user doesn't press Enter to stop recording.
 11. **Audio polish and hardware.** Light EQ, compression and short reverb (e.g. `pedalboard`), tuned on the real speaker hardware; port to the target device.
 
 ### Later / when it becomes a product
 - Smart home control through LLM tool calling (lights, Matter, door sensors, cameras), integrated with the hub and doorbell.
+- **Retrain the wake word on commercially licensed data.** The current `hey_atlas.onnx` is prototype-only. The plan the user liked: write their own trainer. Generate positives with Kokoro (Apache-2.0), using random voice blends to get many synthetic speakers. Use negatives and background noise only from datasets that allow commercial use. Train just the small classifier on top of openWakeWord's frozen melspectrogram and embedding models.
 - A per-user pronunciation setup screen so each customer can fix how Atlas says their name (extends `PRONUNCIATIONS`).
 - **Custom voice from a voice actor.** Finish the voice brief, hire an actor with a written contract granting AI training and commercial use, record 1–2 hours of clean audio (LJSpeech format), and fine-tune on a rented GPU. Until then, the Kokoro blend is a legally shippable voice, though not exclusive to Atlas.
